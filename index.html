@@ -331,6 +331,30 @@ async function handlePhotoCapture(subscriberId, file){
   }catch(err){ alert('صار خطأ برفع صورة العداد: '+err.message); }
 }
 
+function calcFromTarget(subscriberId){
+  const sub = subscriberById(subscriberId);
+  const tier = tierById(sub.tierId);
+  const oldInput = document.getElementById('old_'+subscriberId);
+  const newInput = document.getElementById('new_'+subscriberId);
+  const targetInput = document.getElementById('target_'+subscriberId);
+  const errEl = document.getElementById('err_'+subscriberId);
+  const oldR = parseFloat(oldInput.value);
+  const target = parseFloat(targetInput.value);
+  if(isNaN(oldR)){ errEl.textContent='دخّل القراءة القديمة الأول'; return; }
+  if(isNaN(target) || target<=0){ errEl.textContent='دخّل مبلغ صحيح'; return; }
+  if(!tier || tier.price<=0){ errEl.textContent='ما في سعر مضبوط لهالفئة'; return; }
+  const netAmount = target - (tier.fixed||0);
+  if(netAmount < 0){ errEl.textContent='المبلغ أقل من الرسم الثابت للفئة'; return; }
+  const consumption = num(netAmount / tier.price);
+  const newR = num(oldR + consumption);
+  errEl.textContent='';
+  newInput.value = newR;
+  const consEl = document.getElementById('cons_'+subscriberId);
+  const amtEl = document.getElementById('amt_'+subscriberId);
+  if(consEl) consEl.textContent = consumption+' ك.و.س';
+  if(amtEl) amtEl.textContent = money(target);
+}
+
 async function saveReadingRow(subscriberId){
   const oldInput = document.getElementById('old_'+subscriberId);
   const newInput = document.getElementById('new_'+subscriberId);
@@ -619,13 +643,17 @@ function renderReadingsTab(){
           <div class="field"><label>القراءة القديمة</label><input type="number" id="old_${s.id}" value="${oldVal}" step="0.01"></div>
           <div class="field"><label>القراءة الجديدة</label><input type="number" id="new_${s.id}" value="${newVal}" step="0.01"></div>
         </div>
+        <div class="rc-inputs" style="grid-template-columns:2fr 1fr;align-items:end;">
+          <div class="field"><label>أو دخّل المبلغ المطلوب وخلي البرنامج يحسب القراءة</label><input type="number" id="target_${s.id}" step="0.01" placeholder="مثلاً 180"></div>
+          <button type="button" class="btn-secondary" data-calc-target="${s.id}">احسب</button>
+        </div>
         <p class="error-text" id="err_${s.id}"></p>
         <div class="photo-row">
           <input type="file" accept="image/*" capture="environment" id="photofile_${s.id}" style="display:none;">
           <button type="button" class="photo-btn" data-take-photo="${s.id}">📷 تصوير العداد</button>
           ${photoInfo ? `<img class="photo-thumb" src="${photoInfo.url}"><span class="photo-meta">${fmtDateTime(photoInfo.takenAt)}</span>` : `<span class="photo-meta">ما في صورة بعد</span>`}
         </div>
-        <div class="rc-summary"><span>الاستهلاك: <b>${cons!==''?cons+' ك.و.س':'—'}</b></span><span>المبلغ: <b>${amt!==''?money(amt):'—'}</b></span></div>
+        <div class="rc-summary"><span>الاستهلاك: <b id="cons_${s.id}">${cons!==''?cons+' ك.و.س':'—'}</b></span><span>المبلغ: <b id="amt_${s.id}">${amt!==''?money(amt):'—'}</b></span></div>
         <div class="rc-actions">
           <button class="btn-secondary" data-save-reading="${s.id}">${bill?'تحديث':'حفظ'}</button>
           ${bill && state.role==='admin' ? `<button class="btn-secondary" data-toggle-paid="${bill.id}" style="color:${bill.paid?'var(--danger)':'var(--success)'};">${bill.paid?'إلغاء الدفع':'تعليم كمدفوع'}</button>` : ''}
@@ -747,6 +775,9 @@ function attachContentEvents(){
 
   document.querySelectorAll('[data-save-reading]').forEach(el=>{
     el.onclick = ()=> saveReadingRow(el.getAttribute('data-save-reading'));
+  });
+  document.querySelectorAll('[data-calc-target]').forEach(el=>{
+    el.onclick = ()=> calcFromTarget(el.getAttribute('data-calc-target'));
   });
   document.querySelectorAll('[data-toggle-paid]').forEach(el=>{
     el.onclick = ()=> togglePaid(el.getAttribute('data-toggle-paid'));
