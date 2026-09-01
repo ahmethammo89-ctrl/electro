@@ -103,16 +103,26 @@
   .photo-meta{font-size:12px;color:var(--muted);}
   .photo-btn{background:var(--panel-2);color:var(--teal);border:1px solid var(--border);padding:9px 12px;border-radius:8px;font-size:13px;white-space:nowrap;}
   #print-area{display:none;}
+  @page{size:80mm auto;margin:0;}
   @media print{
     body *{visibility:hidden;}
     #print-area, #print-area *{visibility:visible;}
-    #print-area{display:block;position:absolute;top:0;left:0;width:80mm;padding:4mm;font-family:'Tajawal',sans-serif;color:#000;}
+    #print-area{display:block;position:absolute;top:0;left:0;width:80mm;font-family:'Tajawal',sans-serif;color:#000;}
+    #print-area .receipt-block{width:80mm;padding:4mm;page-break-after:always;}
+    #print-area .receipt-block:last-child{page-break-after:auto;}
     #print-area .pr-title{font-size:14px;font-weight:700;text-align:center;margin-bottom:6px;}
     #print-area .pr-line{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px dashed #000;}
     #print-area .pr-total{font-size:14px;font-weight:700;display:flex;justify-content:space-between;padding-top:8px;}
     #print-area .pr-foot{text-align:center;font-size:10.5px;margin-top:10px;color:#333;}
+    #print-area.a4-mode{width:auto;}
+    #print-area.a4-mode .receipt-block{width:180mm;max-width:180mm;margin:0 auto;padding:10mm;}
+    #print-area.a4-mode .pr-title{font-size:22px;margin-bottom:14px;}
+    #print-area.a4-mode .pr-line{font-size:15px;padding:8px 0;}
+    #print-area.a4-mode .pr-total{font-size:19px;padding-top:14px;}
+    #print-area.a4-mode .pr-foot{font-size:12px;margin-top:20px;}
   }
 </style>
+<style id="page-size-style"></style>
 </head>
 <body>
 <div id="app"></div>
@@ -411,29 +421,75 @@ function fmtDate(d){
   return dt.toLocaleDateString('en-GB');
 }
 
+function receiptBlockHTML(b){
+  const sub = subscriberById(b.subscriberId);
+  const t = tierById(sub?sub.tierId:null);
+  return `
+    <div class="receipt-block">
+      <div class="pr-title">وصل اشتراك كهرباء</div>
+      <div class="pr-title" style="font-size:11px;font-weight:400;">${fmtMonth(b.month)}</div>
+      <div style="text-align:center;font-size:15px;font-weight:700;padding:6px 0;margin-bottom:6px;border:2px solid #000;">
+        ${b.paid?'✓ مدفوع':'✗ غير مدفوع'}
+      </div>
+      <div class="pr-line"><span>المشترك</span><span>${sub?sub.name:'—'}</span></div>
+      <div class="pr-line"><span>رقم الهاتف</span><span>${sub?sub.phone:'—'}</span></div>
+      <div class="pr-line"><span>فئة الأمبير</span><span>${t?t.ampere+' أمبير':'—'}</span></div>
+      <div class="pr-line"><span>القراءة القديمة</span><span>${b.oldReading}</span></div>
+      <div class="pr-line"><span>القراءة الجديدة</span><span>${b.newReading}</span></div>
+      <div class="pr-line"><span>الاستهلاك</span><span>${b.consumption} ك.و.س</span></div>
+      <div class="pr-line"><span>سعر الكيلوواط</span><span>${money(b.pricePerKwh)}</span></div>
+      ${b.fixed?`<div class="pr-line"><span>رسم ثابت</span><span>${money(b.fixed)}</span></div>`:''}
+      <div class="pr-total"><span>الإجمالي</span><span>${money(b.amount)}</span></div>
+      <div class="pr-line" style="border-bottom:none;margin-top:6px;"><span>${b.paid?'تاريخ الدفع':'الحالة'}</span><span>${b.paid?fmtDate(b.paidDate):'غير مدفوع'}</span></div>
+      <div class="pr-foot">تاريخ الطباعة: ${new Date().toLocaleDateString('en-GB')}</div>
+    </div>`;
+}
+
+function setPrintPageSize(mode){
+  const styleEl = document.getElementById('page-size-style');
+  styleEl.textContent = mode==='a4'
+    ? '@media print{ @page{ size:A4; margin:0; } }'
+    : '@media print{ @page{ size:80mm auto; margin:0; } }';
+  const area = document.getElementById('print-area');
+  area.classList.toggle('a4-mode', mode==='a4');
+}
+
 function printReceipt(billId){
   const b = state.bills.find(x=>x.id===billId);
   if(!b) return;
-  const sub = subscriberById(b.subscriberId);
-  const t = tierById(sub?sub.tierId:null);
-  const area = document.getElementById('print-area');
-  area.innerHTML = `
-    <div class="pr-title">وصل اشتراك كهرباء</div>
-    <div class="pr-title" style="font-size:11px;font-weight:400;">${fmtMonth(b.month)}</div>
-    <div style="text-align:center;font-size:15px;font-weight:700;padding:6px 0;margin-bottom:6px;border:2px solid #000;">
-      ${b.paid?'✓ مدفوع':'✗ غير مدفوع'}
-    </div>
-    <div class="pr-line"><span>المشترك</span><span>${sub?sub.name:'—'}</span></div>
-    <div class="pr-line"><span>رقم الهاتف</span><span>${sub?sub.phone:'—'}</span></div>
-    <div class="pr-line"><span>فئة الأمبير</span><span>${t?t.ampere+' أمبير':'—'}</span></div>
-    <div class="pr-line"><span>القراءة القديمة</span><span>${b.oldReading}</span></div>
-    <div class="pr-line"><span>القراءة الجديدة</span><span>${b.newReading}</span></div>
-    <div class="pr-line"><span>الاستهلاك</span><span>${b.consumption} ك.و.س</span></div>
-    <div class="pr-line"><span>سعر الكيلوواط</span><span>${money(b.pricePerKwh)}</span></div>
-    ${b.fixed?`<div class="pr-line"><span>رسم ثابت</span><span>${money(b.fixed)}</span></div>`:''}
-    <div class="pr-total"><span>الإجمالي</span><span>${money(b.amount)}</span></div>
-    <div class="pr-line" style="border-bottom:none;margin-top:6px;"><span>${b.paid?'تاريخ الدفع':'الحالة'}</span><span>${b.paid?fmtDate(b.paidDate):'غير مدفوع'}</span></div>
-    <div class="pr-foot">تاريخ الطباعة: ${new Date().toLocaleDateString('en-GB')}</div>`;
+  setPrintPageSize('thermal');
+  document.getElementById('print-area').innerHTML = receiptBlockHTML(b);
+  window.print();
+}
+
+function printReceiptA4(billId){
+  const b = state.bills.find(x=>x.id===billId);
+  if(!b) return;
+  setPrintPageSize('a4');
+  document.getElementById('print-area').innerHTML = receiptBlockHTML(b);
+  window.print();
+}
+
+function billsForCurrentMonth(){
+  return state.bills.filter(b=>b.month===state.currentMonth).sort((a,b)=>{
+    const sa = subscriberById(a.subscriberId), sb2 = subscriberById(b.subscriberId);
+    return (sa?sa.name:'').localeCompare(sb2?sb2.name:'');
+  });
+}
+
+function printAllThermal(){
+  const bills = billsForCurrentMonth();
+  if(!bills.length){ alert('ما في فواتير مسجّلة لهالشهر'); return; }
+  setPrintPageSize('thermal');
+  document.getElementById('print-area').innerHTML = bills.map(receiptBlockHTML).join('');
+  window.print();
+}
+
+function printAllA4(){
+  const bills = billsForCurrentMonth();
+  if(!bills.length){ alert('ما في فواتير مسجّلة لهالشهر'); return; }
+  setPrintPageSize('a4');
+  document.getElementById('print-area').innerHTML = bills.map(receiptBlockHTML).join('');
   window.print();
 }
 
@@ -453,6 +509,7 @@ function render(){
     else if(state.adminTab==='subscribers') html += renderSubscribersTab();
     else if(state.adminTab==='readings') html += renderReadingsTab();
     else if(state.adminTab==='tiers') html += renderTiersTab();
+    else if(state.adminTab==='receipts') html += renderReceiptsTab();
   } else if(state.role==='rep'){
     html += renderReadingsTab();
   }
@@ -664,6 +721,34 @@ function renderReadingsTab(){
   return html;
 }
 
+function renderReceiptsTab(){
+  const bills = billsForCurrentMonth();
+  let html = `
+    <div class="month-picker">
+      <label class="field" style="flex:1;margin:0;"><input type="month" id="month-input" value="${state.currentMonth}"></label>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:18px;">
+      <button class="btn-secondary" id="print-all-thermal-btn" style="flex:1;">🖨 طباعة الكل - حراري</button>
+      <button class="btn-secondary" id="print-all-a4-btn" style="flex:1;">📄 PDF الكل - A4</button>
+    </div>
+    <div class="section-title"><span>فواتير ${fmtMonth(state.currentMonth)} (${bills.length})</span></div>`;
+  if(!bills.length){
+    html += `<div class="empty-state">ما في فواتير مسجّلة لهالشهر بعد</div>`;
+  } else {
+    bills.forEach(b=>{
+      const sub = subscriberById(b.subscriberId);
+      html += `<div class="list-row">
+        <div><div class="rname">${sub?sub.name:'—'}</div><div class="rsub">${money(b.amount)} · <span class="pill ${b.paid?'paid':'unpaid'}">${b.paid?'مدفوع':'غير مدفوع'}</span></div></div>
+        <div style="display:flex;gap:6px;">
+          <button class="print-btn" data-print-bill="${b.id}">🖨</button>
+          <button class="print-btn" data-print-bill-a4="${b.id}">📄</button>
+        </div>
+      </div>`;
+    });
+  }
+  return html;
+}
+
 function renderSubscriberView(){
   const sub = subscriberById(state.currentSubscriberId);
   if(!sub) return `<div class="empty-state">تعذّر إيجاد الاشتراك</div>`;
@@ -706,6 +791,7 @@ function renderBottomNav(){
   const tabs = [
     {id:'dashboard', label:'الرئيسية'},
     {id:'readings', label:'القراءات'},
+    {id:'receipts', label:'إيصالات'},
     {id:'subscribers', label:'المشتركين'},
     {id:'tiers', label:'الفئات'}
   ];
@@ -785,6 +871,13 @@ function attachContentEvents(){
   document.querySelectorAll('[data-print-bill]').forEach(el=>{
     el.onclick = ()=> printReceipt(el.getAttribute('data-print-bill'));
   });
+  document.querySelectorAll('[data-print-bill-a4]').forEach(el=>{
+    el.onclick = ()=> printReceiptA4(el.getAttribute('data-print-bill-a4'));
+  });
+  const printAllThermalBtn = document.getElementById('print-all-thermal-btn');
+  if(printAllThermalBtn) printAllThermalBtn.onclick = printAllThermal;
+  const printAllA4Btn = document.getElementById('print-all-a4-btn');
+  if(printAllA4Btn) printAllA4Btn.onclick = printAllA4;
   document.querySelectorAll('[data-take-photo]').forEach(el=>{
     const sid = el.getAttribute('data-take-photo');
     el.onclick = ()=> document.getElementById('photofile_'+sid).click();
