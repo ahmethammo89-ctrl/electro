@@ -98,6 +98,10 @@
   .profile-card .pmeta{font-size:13px;color:var(--muted);}
   .link-inline{background:none;color:var(--accent);font-size:14px;text-decoration:underline;}
   .print-btn{background:transparent;color:var(--teal);border:1px solid var(--border);font-size:12.5px;padding:6px 10px;border-radius:8px;}
+  .photo-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+  .photo-thumb{width:48px;height:48px;border-radius:8px;object-fit:cover;border:1px solid var(--border);}
+  .photo-meta{font-size:12px;color:var(--muted);}
+  .photo-btn{background:var(--panel-2);color:var(--teal);border:1px solid var(--border);padding:9px 12px;border-radius:8px;font-size:13px;white-space:nowrap;}
   #print-area{display:none;}
   @media print{
     body *{visibility:hidden;}
@@ -141,10 +145,13 @@ function normPhone(p){return (p||'').replace(/[^0-9]/g,'');}
 function money(n){const v=Math.round((n||0)*100)/100;return state.config.currency+' '+v.toLocaleString('en-US');}
 function num(n){return Math.round((n||0)*100)/100;}
 
+const pendingPhotos = {};
+
 function fromRow(b){
   return {id:b.id, subscriberId:b.subscriber_id, month:b.month, oldReading:Number(b.old_reading),
     newReading:Number(b.new_reading), consumption:Number(b.consumption), amount:Number(b.amount),
-    pricePerKwh:Number(b.price_per_kwh), fixed:Number(b.fixed), paid:b.paid, paidDate:b.paid_date};
+    pricePerKwh:Number(b.price_per_kwh), fixed:Number(b.fixed), paid:b.paid, paidDate:b.paid_date,
+    photoUrl:b.photo_url||null, photoTakenAt:b.photo_taken_at||null};
 }
 function subFromRow(s){ return {id:s.id, name:s.name, phone:s.phone, tierId:s.tier_id, address:s.address, createdAt:s.created_at}; }
 
@@ -280,6 +287,25 @@ async function deleteSubscriber(id){
   render();
 }
 
+function fmtDateTime(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB') + ' ' + d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+}
+
+async function handlePhotoCapture(subscriberId, file){
+  if(!file) return;
+  const now = new Date();
+  const path = `${subscriberId}/${now.getTime()}.jpg`;
+  try{
+    const {error} = await sb.storage.from('meter-photos').upload(path, file, {contentType:file.type||'image/jpeg'});
+    if(error) throw error;
+    const {data} = sb.storage.from('meter-photos').getPublicUrl(path);
+    pendingPhotos[subscriberId] = {url:data.publicUrl, takenAt:now.toISOString()};
+    render();
+  }catch(err){ alert('صار خطأ برفع صورة العداد: '+err.message); }
+}
+
 async function saveReadingRow(subscriberId){
   const oldInput = document.getElementById('old_'+subscriberId);
   const newInput = document.getElementById('new_'+subscriberId);
@@ -293,16 +319,22 @@ async function saveReadingRow(subscriberId){
   const tier = tierById(sub.tierId);
   const {consumption, amount} = computeAmount(tier, oldR, newR);
   let bill = billFor(subscriberId, state.currentMonth);
+  const photo = pendingPhotos[subscriberId];
+  const photoUrl = photo ? photo.url : (bill ? bill.photoUrl : null);
+  const photoTakenAt = photo ? photo.takenAt : (bill ? bill.photoTakenAt : null);
   const row = {subscriber_id:subscriberId, month:state.currentMonth, old_reading:oldR, new_reading:newR,
-    consumption, amount, price_per_kwh:tier.price, fixed:tier.fixed||0, paid: bill?bill.paid:false, paid_date: bill?bill.paidDate:null};
+    consumption, amount, price_per_kwh:tier.price, fixed:tier.fixed||0, paid: bill?bill.paid:false, paid_date: bill?bill.paidDate:null,
+    photo_url:photoUrl, photo_taken_at:photoTakenAt};
   try{
     const {data, error} = await sb.from('bills').upsert(row, {onConflict:'subscriber_id,month'}).select().single();
     if(error) throw error;
     if(bill){
       bill.oldReading=oldR; bill.newReading=newR; bill.consumption=consumption; bill.amount=amount; bill.pricePerKwh=tier.price; bill.fixed=tier.fixed||0;
+      bill.photoUrl=photoUrl; bill.photoTakenAt=photoTakenAt;
     }else{
       state.bills.push(fromRow(data));
     }
+    delete pendingPhotos[subscriberId];
   }catch(err){ errEl.textContent='صار خطأ بالحفظ: '+err.message; return; }
   render();
 }
@@ -339,6 +371,9 @@ function printReceipt(billId){
   area.innerHTML = `
     <div class="pr-title">وصل اشتراك كهرباء</div>
     <div class="pr-title" style="font-size:11px;font-weight:400;">${fmtMonth(b.month)}</div>
+    <div style="text-align:center;font-size:15px;font-weight:700;padding:6px 0;margin-bottom:6px;border:2px solid #000;">
+      ${b.paid?'✓ مدفوع':'✗ غير مدفوع'}
+    </div>
     <div class="pr-line"><span>المشترك</span><span>${sub?sub.name:'—'}</span></div>
     <div class="pr-line"><span>رقم الهاتف</span><span>${sub?sub.phone:'—'}</span></div>
     <div class="pr-line"><span>فئة الأمبير</span><span>${t?t.ampere+' أمبير':'—'}</span></div>
@@ -348,7 +383,7 @@ function printReceipt(billId){
     <div class="pr-line"><span>سعر الكيلوواط</span><span>${money(b.pricePerKwh)}</span></div>
     ${b.fixed?`<div class="pr-line"><span>رسم ثابت</span><span>${money(b.fixed)}</span></div>`:''}
     <div class="pr-total"><span>الإجمالي</span><span>${money(b.amount)}</span></div>
-    <div class="pr-line" style="border-bottom:none;margin-top:6px;"><span>الحالة</span><span>${b.paid?'مدفوع بتاريخ '+fmtDate(b.paidDate):'غير مدفوع'}</span></div>
+    <div class="pr-line" style="border-bottom:none;margin-top:6px;"><span>${b.paid?'تاريخ الدفع':'الحالة'}</span><span>${b.paid?fmtDate(b.paidDate):'غير مدفوع'}</span></div>
     <div class="pr-foot">تاريخ الطباعة: ${new Date().toLocaleDateString('en-GB')}</div>`;
   window.print();
 }
@@ -485,6 +520,26 @@ function renderSubscribersTab(){
   return html;
 }
 
+function downloadBackup(){
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    config: state.config,
+    tiers: state.tiers,
+    subscribers: state.subscribers,
+    bills: state.bills
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dateStr = new Date().toISOString().slice(0,10);
+  a.href = url;
+  a.download = `نسخة-احتياطية-اشتراكات-كهرباء-${dateStr}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function renderTiersTab(){
   let html = `
     <div class="field">
@@ -503,6 +558,10 @@ function renderTiersTab(){
     });
   }
   html += `<div class="add-fab" id="add-tier-fab">+</div>`;
+  html += `
+    <div class="section-title"><span>النسخ الاحتياطي</span></div>
+    <button class="btn-secondary" id="backup-btn" style="width:100%;">⬇ تحميل نسخة احتياطية (JSON)</button>
+    <p class="muted" style="margin-top:8px;">بيحمّل كل البيانات (المشتركين، الفئات، الفواتير) كملف على جهازك. منيح تعمليها كل فترة كاحتياط إضافي.</p>`;
   return html;
 }
 
@@ -523,6 +582,7 @@ function renderReadingsTab(){
     const newVal = bill ? bill.newReading : '';
     const cons = bill ? bill.consumption : '';
     const amt = bill ? bill.amount : '';
+    const photoInfo = pendingPhotos[s.id] || (bill && bill.photoUrl ? {url:bill.photoUrl, takenAt:bill.photoTakenAt} : null);
     html += `
       <div class="reading-card">
         <div class="rc-head">
@@ -534,6 +594,11 @@ function renderReadingsTab(){
           <div class="field"><label>القراءة الجديدة</label><input type="number" id="new_${s.id}" value="${newVal}" step="0.01"></div>
         </div>
         <p class="error-text" id="err_${s.id}"></p>
+        <div class="photo-row">
+          <input type="file" accept="image/*" capture="environment" id="photofile_${s.id}" style="display:none;">
+          <button type="button" class="photo-btn" data-take-photo="${s.id}">📷 تصوير العداد</button>
+          ${photoInfo ? `<img class="photo-thumb" src="${photoInfo.url}"><span class="photo-meta">${fmtDateTime(photoInfo.takenAt)}</span>` : `<span class="photo-meta">ما في صورة بعد</span>`}
+        </div>
         <div class="rc-summary"><span>الاستهلاك: <b>${cons!==''?cons+' ك.و.س':'—'}</b></span><span>المبلغ: <b>${amt!==''?money(amt):'—'}</b></span></div>
         <div class="rc-actions">
           <button class="btn-secondary" data-save-reading="${s.id}">${bill?'تحديث':'حفظ'}</button>
@@ -564,6 +629,7 @@ function renderSubscriberView(){
         <div class="stat-card"><div class="label">المبلغ</div><div class="val">${money(latest.amount)}</div></div>
         <div class="stat-card wide"><div class="label">الحالة</div><div class="val"><span class="pill ${latest.paid?'paid':'unpaid'}">${latest.paid?'مدفوع':'غير مدفوع'}</span></div></div>
       </div>
+      ${latest.photoUrl?`<div class="photo-row"><img class="photo-thumb" src="${latest.photoUrl}"><span class="photo-meta">صورة العداد — ${fmtDateTime(latest.photoTakenAt)}</span></div>`:''}
       <button class="print-btn" data-print-bill="${latest.id}" style="width:100%;margin-bottom:20px;">🖨 طباعة وصل هالفاتورة</button>`;
   } else {
     html += `<div class="empty-state">ما في فواتير مسجّلة إلك لحد هلق</div>`;
@@ -662,9 +728,20 @@ function attachContentEvents(){
   document.querySelectorAll('[data-print-bill]').forEach(el=>{
     el.onclick = ()=> printReceipt(el.getAttribute('data-print-bill'));
   });
+  document.querySelectorAll('[data-take-photo]').forEach(el=>{
+    const sid = el.getAttribute('data-take-photo');
+    el.onclick = ()=> document.getElementById('photofile_'+sid).click();
+    const fileInput = document.getElementById('photofile_'+sid);
+    if(fileInput) fileInput.onchange = (e)=>{
+      const f = e.target.files[0];
+      if(f) handlePhotoCapture(sid, f);
+    };
+  });
 
   const addTierFab = document.getElementById('add-tier-fab');
   if(addTierFab) addTierFab.onclick = ()=> openForm('tier', {});
+  const backupBtn = document.getElementById('backup-btn');
+  if(backupBtn) backupBtn.onclick = downloadBackup;
   document.querySelectorAll('[data-edit-tier]').forEach(el=>{
     el.onclick = ()=> openForm('tier', {...tierById(el.getAttribute('data-edit-tier'))});
   });
