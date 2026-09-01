@@ -130,7 +130,7 @@ const state = {
   currentSubscriberId:null,
   adminTab:'dashboard',
   currentMonth:new Date().toISOString().slice(0,7),
-  config:{currency:'$'},
+  config:{currency:'$', adminPassword:''},
   tiers:[],
   subscribers:[],
   bills:[],
@@ -163,7 +163,7 @@ async function loadAll(){
       sb.from('subscribers').select('*').order('name'),
       sb.from('bills').select('*')
     ]);
-    if(cfg) state.config = {currency: cfg.currency};
+    if(cfg) state.config = {currency: cfg.currency, adminPassword: cfg.admin_password||''};
     state.tiers = (tiers||[]).map(t=>({id:t.id, ampere:t.ampere, price:Number(t.price), fixed:Number(t.fixed)}));
     state.subscribers = (subs||[]).map(subFromRow);
     state.bills = (bills||[]).map(fromRow);
@@ -173,7 +173,7 @@ async function loadAll(){
 }
 
 async function saveConfig(){
-  try{ await sb.from('config').upsert({id:1, currency: state.config.currency}); }
+  try{ await sb.from('config').upsert({id:1, currency: state.config.currency, admin_password: state.config.adminPassword||''}); }
   catch(e){ console.error('save config failed', e); }
 }
 
@@ -213,11 +213,36 @@ function tryLoginSubscriber(){
   render();
 }
 
-function enterAs(role){
+async function enterAs(role){
+  if(role==='admin'){
+    if(!state.config.adminPassword){
+      const p1 = prompt('أول مرة عم تفوتي عالإدارة — عيّني كلمة سر جديدة:');
+      if(!p1){ return; }
+      const p2 = prompt('أكدي كلمة السر:');
+      if(p1!==p2){ alert('كلمتا السر مش متطابقتين، جربي مرة تانية'); return; }
+      state.config.adminPassword = p1;
+      await saveConfig();
+    } else {
+      const p = prompt('كلمة سر الإدارة:');
+      if(p!==state.config.adminPassword){ alert('كلمة السر غلط'); return; }
+    }
+  }
   state.role=role;
   state.view = role==='subscriber' ? 'subscriber-login' : 'app';
   state.adminTab = role==='rep' ? 'readings' : 'dashboard';
   render();
+}
+
+async function changeAdminPassword(){
+  const current = prompt('كلمة السر الحالية:');
+  if(current!==state.config.adminPassword){ alert('كلمة السر غلط'); return; }
+  const np1 = prompt('كلمة السر الجديدة:');
+  if(!np1) return;
+  const np2 = prompt('أكدي كلمة السر الجديدة:');
+  if(np1!==np2){ alert('كلمتا السر مش متطابقتين'); return; }
+  state.config.adminPassword = np1;
+  await saveConfig();
+  alert('تم تغيير كلمة السر');
 }
 
 function openForm(type, data){
@@ -561,7 +586,8 @@ function renderTiersTab(){
   html += `
     <div class="section-title"><span>النسخ الاحتياطي</span></div>
     <button class="btn-secondary" id="backup-btn" style="width:100%;">⬇ تحميل نسخة احتياطية (JSON)</button>
-    <p class="muted" style="margin-top:8px;">بيحمّل كل البيانات (المشتركين، الفئات، الفواتير) كملف على جهازك. منيح تعمليها كل فترة كاحتياط إضافي.</p>`;
+    <div class="section-title"><span>الأمان</span></div>
+    <button class="btn-secondary" id="change-password-btn" style="width:100%;">🔒 تغيير كلمة سر الإدارة</button>`;
   return html;
 }
 
@@ -602,7 +628,7 @@ function renderReadingsTab(){
         <div class="rc-summary"><span>الاستهلاك: <b>${cons!==''?cons+' ك.و.س':'—'}</b></span><span>المبلغ: <b>${amt!==''?money(amt):'—'}</b></span></div>
         <div class="rc-actions">
           <button class="btn-secondary" data-save-reading="${s.id}">${bill?'تحديث':'حفظ'}</button>
-          ${bill?`<button class="btn-secondary" data-toggle-paid="${bill.id}" style="color:${bill.paid?'var(--danger)':'var(--success)'};">${bill.paid?'إلغاء الدفع':'تعليم كمدفوع'}</button>`:''}
+          ${bill && state.role==='admin' ? `<button class="btn-secondary" data-toggle-paid="${bill.id}" style="color:${bill.paid?'var(--danger)':'var(--success)'};">${bill.paid?'إلغاء الدفع':'تعليم كمدفوع'}</button>` : ''}
         </div>
         ${bill?`<button class="print-btn" data-print-bill="${bill.id}" style="width:100%;margin-top:8px;">🖨 طباعة وصل</button>`:''}
       </div>`;
@@ -742,6 +768,8 @@ function attachContentEvents(){
   if(addTierFab) addTierFab.onclick = ()=> openForm('tier', {});
   const backupBtn = document.getElementById('backup-btn');
   if(backupBtn) backupBtn.onclick = downloadBackup;
+  const changePwBtn = document.getElementById('change-password-btn');
+  if(changePwBtn) changePwBtn.onclick = changeAdminPassword;
   document.querySelectorAll('[data-edit-tier]').forEach(el=>{
     el.onclick = ()=> openForm('tier', {...tierById(el.getAttribute('data-edit-tier'))});
   });
