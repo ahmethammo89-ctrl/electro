@@ -102,12 +102,13 @@
   .photo-thumb{width:48px;height:48px;border-radius:8px;object-fit:cover;border:1px solid var(--border);}
   .photo-meta{font-size:12px;color:var(--muted);}
   .photo-btn{background:var(--panel-2);color:var(--teal);border:1px solid var(--border);padding:9px 12px;border-radius:8px;font-size:13px;white-space:nowrap;}
+  
   #print-area{display:none;}
   @page{size:80mm auto;margin:0;}
   @media print{
-    body *{visibility:hidden;}
-    #print-area, #print-area *{visibility:visible;}
-    #print-area{display:block;position:absolute;top:0;left:0;width:80mm;font-family:'Tajawal',sans-serif;color:#000;}
+    body { margin: 0; padding: 0; background: #fff; }
+    #app { display: none !important; }
+    #print-area { display: block !important; position: relative; width: 80mm; font-family: 'Tajawal', sans-serif; color: #000; margin: 0 auto; }
     #print-area .receipt-block{width:80mm;padding:4mm;page-break-after:always;}
     #print-area .receipt-block:last-child{page-break-after:auto;}
     #print-area .pr-title{font-size:14px;font-weight:700;text-align:center;margin-bottom:6px;}
@@ -128,7 +129,6 @@
 <div id="app"></div>
 <div id="print-area"></div>
 <script>
-// حط هون الـ Project URL و anon key يلي جبتهم من Settings > API بمشروع Supabase
 const SUPABASE_URL = 'https://omdliavluxjipsdhdhim.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tZGxpYXZsdXhqaXBzZGhkaGltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyMzk0MDMsImV4cCI6MjEwMzgxNTQwM30.2ePY8lpL7CBZ1hEWV_RJhQ3eK0ZTPF1PkZ424WiMPD4';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -341,6 +341,29 @@ async function handlePhotoCapture(subscriberId, file){
   }catch(err){ alert('صار خطأ برفع صورة العداد: '+err.message); }
 }
 
+function updateRowSummary(subscriberId) {
+  const sub = subscriberById(subscriberId);
+  const tier = tierById(sub.tierId);
+  const oldInput = document.getElementById('old_'+subscriberId);
+  const newInput = document.getElementById('new_'+subscriberId);
+  const oldR = parseFloat(oldInput.value);
+  const newR = parseFloat(newInput.value);
+  const consEl = document.getElementById('cons_'+subscriberId);
+  const amtEl = document.getElementById('amt_'+subscriberId);
+  const errEl = document.getElementById('err_'+subscriberId);
+
+  if(isNaN(oldR) || isNaN(newR) || newR < oldR) {
+     if(consEl) consEl.textContent = '—';
+     if(amtEl) amtEl.textContent = '—';
+     return;
+  }
+  
+  const {consumption, amount} = computeAmount(tier, oldR, newR);
+  if(consEl) consEl.textContent = consumption + ' ك.و.س';
+  if(amtEl) amtEl.textContent = money(amount);
+  if(errEl) errEl.textContent = '';
+}
+
 function calcFromTarget(subscriberId){
   const sub = subscriberById(subscriberId);
   const tier = tierById(sub.tierId);
@@ -348,21 +371,30 @@ function calcFromTarget(subscriberId){
   const newInput = document.getElementById('new_'+subscriberId);
   const targetInput = document.getElementById('target_'+subscriberId);
   const errEl = document.getElementById('err_'+subscriberId);
+  
   const oldR = parseFloat(oldInput.value);
   const target = parseFloat(targetInput.value);
+  
   if(isNaN(oldR)){ errEl.textContent='دخّل القراءة القديمة الأول'; return; }
-  if(isNaN(target) || target<=0){ errEl.textContent='دخّل مبلغ صحيح'; return; }
+  
+  if(isNaN(target) || target <= 0) {
+      newInput.value = '';
+      updateRowSummary(subscriberId);
+      return;
+  }
+  
   if(!tier || tier.price<=0){ errEl.textContent='ما في سعر مضبوط لهالفئة'; return; }
+  
   const netAmount = target - (tier.fixed||0);
   if(netAmount < 0){ errEl.textContent='المبلغ أقل من الرسم الثابت للفئة'; return; }
+  
   const consumption = num(netAmount / tier.price);
   const newR = num(oldR + consumption);
+  
   errEl.textContent='';
   newInput.value = newR;
-  const consEl = document.getElementById('cons_'+subscriberId);
-  const amtEl = document.getElementById('amt_'+subscriberId);
-  if(consEl) consEl.textContent = consumption+' ك.و.س';
-  if(amtEl) amtEl.textContent = money(target);
+  
+  updateRowSummary(subscriberId);
 }
 
 async function saveReadingRow(subscriberId){
@@ -697,12 +729,13 @@ function renderReadingsTab(){
           ${bill?`<span class="pill ${bill.paid?'paid':'unpaid'}">${bill.paid?'مدفوع':'غير مدفوع'}</span>`:''}
         </div>
         <div class="rc-inputs">
-          <div class="field"><label>القراءة القديمة</label><input type="number" id="old_${s.id}" value="${oldVal}" step="0.01"></div>
-          <div class="field"><label>القراءة الجديدة</label><input type="number" id="new_${s.id}" value="${newVal}" step="0.01"></div>
+          <div class="field"><label>القراءة القديمة</label><input type="number" id="old_${s.id}" data-live-calc="${s.id}" value="${oldVal}" step="0.01"></div>
+          <div class="field"><label>القراءة الجديدة</label><input type="number" id="new_${s.id}" data-live-calc="${s.id}" value="${newVal}" step="0.01"></div>
         </div>
-        <div class="rc-inputs" style="grid-template-columns:2fr 1fr;align-items:end;">
-          <div class="field"><label>أو دخّل المبلغ المطلوب وخلي البرنامج يحسب القراءة</label><input type="number" id="target_${s.id}" step="0.01" placeholder="مثلاً 180"></div>
-          <button type="button" class="btn-secondary" data-calc-target="${s.id}">احسب</button>
+        <div class="rc-inputs" style="grid-template-columns:1fr;align-items:end;">
+          <div class="field"><label>أو اكتب المبلغ المطلوب ليتم حساب القراءة أوتوماتيكياً</label>
+            <input type="number" id="target_${s.id}" data-auto-target="${s.id}" step="0.01" placeholder="مثلاً 180">
+          </div>
         </div>
         <p class="error-text" id="err_${s.id}"></p>
         <div class="photo-row">
@@ -862,9 +895,17 @@ function attachContentEvents(){
   document.querySelectorAll('[data-save-reading]').forEach(el=>{
     el.onclick = ()=> saveReadingRow(el.getAttribute('data-save-reading'));
   });
-  document.querySelectorAll('[data-calc-target]').forEach(el=>{
-    el.onclick = ()=> calcFromTarget(el.getAttribute('data-calc-target'));
+
+  // هنا يتم ربط الحساب الأوتوماتيكي عند كتابة المبلغ المطلوب
+  document.querySelectorAll('[data-auto-target]').forEach(el=>{
+    el.addEventListener('input', ()=> calcFromTarget(el.getAttribute('data-auto-target')));
   });
+
+  // وهنا يتم التحديث التلقائي للاستهلاك إذا تم تغيير القراءة القديمة أو الجديدة
+  document.querySelectorAll('[data-live-calc]').forEach(el=>{
+    el.addEventListener('input', ()=> updateRowSummary(el.getAttribute('data-live-calc')));
+  });
+
   document.querySelectorAll('[data-toggle-paid]').forEach(el=>{
     el.onclick = ()=> togglePaid(el.getAttribute('data-toggle-paid'));
   });
@@ -874,10 +915,12 @@ function attachContentEvents(){
   document.querySelectorAll('[data-print-bill-a4]').forEach(el=>{
     el.onclick = ()=> printReceiptA4(el.getAttribute('data-print-bill-a4'));
   });
+  
   const printAllThermalBtn = document.getElementById('print-all-thermal-btn');
   if(printAllThermalBtn) printAllThermalBtn.onclick = printAllThermal;
   const printAllA4Btn = document.getElementById('print-all-a4-btn');
   if(printAllA4Btn) printAllA4Btn.onclick = printAllA4;
+  
   document.querySelectorAll('[data-take-photo]').forEach(el=>{
     const sid = el.getAttribute('data-take-photo');
     el.onclick = ()=> document.getElementById('photofile_'+sid).click();
